@@ -1,0 +1,78 @@
+#SPRINT 0 GHUGO
+image: node:20.8.0-alpine3.18
+variables:
+    DOCKER_HOST: tcp://localhost:2375 # No use of SSL
+    DOCKER_TLS_CERTDIR: "" # No use of SSL
+    GROUP_NAME: felix-sprint-0
+
+default:
+    tags:
+        - preprod-K3S
+
+stages:
+    - build
+    - deploy
+
+build-preprod-front:
+    image: docker:24.0.7
+    stage: build
+    before_script:
+        - export DOCKER_BUILDKIT=1
+    services:
+        - name: docker:20.10.16-dind
+          command:
+              [
+                  "dockerd",
+                  "-H",
+                  "tcp://localhost:2375",
+                  "--tls=false",
+                  "--insecure-registry",
+                  "registry.nexus.preprod.lab.solutec",
+              ]
+
+    variables:
+        IMAGE_TAG_FRONT: ${NEXUS_PREPROD_HOST}/${GROUP_NAME}/front:latest
+    script:
+        - docker login -u ${NEXUS_LOGIN} -p ${NEXUS_PWD} ${NEXUS_PREPROD_HOST}
+        - cd muze-front
+        - docker build -f Dockerfile --tag $IMAGE_TAG_FRONT .
+        - docker push $IMAGE_TAG_FRONT
+
+
+build-preprod-back:
+    image: docker:24.0.7
+    stage: build
+    before_script:
+        - export DOCKER_BUILDKIT=1
+    services:
+        - name: docker:20.10.16-dind
+          command:
+              [
+                  "dockerd",
+                  "-H",
+                  "tcp://localhost:2375",
+                  "--tls=false",
+                  "--insecure-registry",
+                  "registry.nexus.preprod.lab.solutec",
+              ]
+
+    variables:
+        IMAGE_TAG_BACK: ${NEXUS_PREPROD_HOST}/${GROUP_NAME}/back:latest
+    script:
+        - docker login -u ${NEXUS_LOGIN} -p ${NEXUS_PWD} ${NEXUS_PREPROD_HOST}
+        - cd muze-back
+        - docker build -f Dockerfile --tag $IMAGE_TAG_BACK .
+        - docker push $IMAGE_TAG_BACK
+
+deploy-preprod:
+    image: alpine:3.18.0
+    stage: deploy
+    before_script:
+        - chmod og= ${VM_SSH_KEY}
+        - apk --update add openssh-client
+    script:
+        - scp -i ${VM_SSH_KEY} -o StrictHostKeyChecking=no ${ENV_FILE} ${VM_USER}@${VM_IP}:.env
+        - scp -i ${VM_SSH_KEY} -o StrictHostKeyChecking=no docker-compose.yml ${VM_USER}@${VM_IP}:docker-compose.yml
+        - ssh -i ${VM_SSH_KEY} -o StrictHostKeyChecking=no ${VM_USER}@${VM_IP} "sudo docker system prune --force"
+        - ssh -i ${VM_SSH_KEY} -o StrictHostKeyChecking=no ${VM_USER}@${VM_IP} "sudo docker compose pull"
+        - ssh -i ${VM_SSH_KEY} -o StrictHostKeyChecking=no ${VM_USER}@${VM_IP} "sudo docker compose up -d"
